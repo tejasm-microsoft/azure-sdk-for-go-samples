@@ -212,11 +212,11 @@ func main() {
 	//deleteGroupQuota("test-sdk-tejas-go-0")
 
 	//Subscription Functions
-	addSubscription("test-sdk-tejas-go")
+	//addSubscription("test-sdk-tejas-go")
 	//deleteSubscription("test-sdk-tejas-go")
 
 	//GroupQuotaLimit Request
-	//createGroupQuotaLimitRequest("test-sdk-tejas-go")
+	createGroupQuotaLimitRequest("test-sdk-tejas-go")
 }
 
 func createClientFactory() *armquota.ClientFactory {
