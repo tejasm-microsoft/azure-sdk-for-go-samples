@@ -7,6 +7,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
+	"strings"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	armPolicy "github.com/Azure/azure-sdk-for-go/sdk/azcore/arm/policy"
@@ -154,11 +157,9 @@ func deleteSubscription(groupName string) {
 	}
 }
 
-func createGroupQuotaLimitRequest(groupName string) {
+func createGroupQuotaLimitRequest(groupName string, provider string, resourceName string, region string, limitVal int64) {
 	ctx := context.Background()
 	clientFactory := createClientFactory()
-
-	var limitVal int64 = 64
 
 	groupQuotaLimitRequestBody := &armquota.GroupQuotaLimitsRequestClientBeginCreateOrUpdateOptions{
 		GroupQuotaRequest: &armquota.SubmittedResourceRequestStatus{
@@ -166,42 +167,242 @@ func createGroupQuotaLimitRequest(groupName string) {
 				RequestedResource: &armquota.GroupQuotaRequestBase{
 					Properties: &armquota.GroupQuotaRequestBaseProperties{
 						Limit:  &limitVal,
-						Region: to.Ptr("westus"),
+						Region: to.Ptr(region),
 					},
 				},
 			},
 		},
 	}
-
-	poller, err := clientFactory.NewGroupQuotaLimitsRequestClient().BeginCreateOrUpdate(ctx, managementGroupId, groupName, "Microsoft.Compute", "cores", groupQuotaLimitRequestBody)
+	groupQuotaLimitsRequestClient := clientFactory.NewGroupQuotaLimitsRequestClient()
+	poller, err := groupQuotaLimitsRequestClient.BeginCreateOrUpdate(ctx, managementGroupId, groupName, provider, resourceName, groupQuotaLimitRequestBody)
 	if err != nil {
 		log.Fatalf("failed to finish the request: %v", err)
 	}
-	res, err := poller.PollUntilDone(ctx, nil)
+
+	// Get the HTTP response from the quota limit request
+	res, err := poller.Poll(ctx)
 	if err != nil {
-		log.Fatalf("failed to pull the result: %v", err)
+		panic(err)
+	}
+	opStatus := res.Header["Location"][0]
+	opStatusURI, err := url.Parse(opStatus)
+	if err != nil {
+		panic(err)
+	}
+
+	// Get the request ID and the Request URL in case the request doesn't reach a terminal state in 2 minutes
+	opStatusURISegments := strings.Split(opStatusURI.Path, "/")
+	id := opStatusURISegments[len(opStatusURISegments)-1]
+
+	// Poll for 2 minutes until the group quota limit request has completed
+	start := time.Now()
+	duration := 2 * time.Minute
+	provisioningState := armquota.RequestStateInProgress
+	for time.Since(start) < duration {
+		group_limit_request_res, err := groupQuotaLimitsRequestClient.Get(ctx, managementGroupId, groupName, id, nil)
+		if err != nil {
+			panic(err)
+		}
+
+		provisioningState = *group_limit_request_res.Properties.ProvisioningState
+		if provisioningState == armquota.RequestStateSucceeded {
+			groupQuotaLimitClient := clientFactory.NewGroupQuotaLimitsClient()
+			filterString := fmt.Sprintf("location eq %s", region)
+			limit_res, err := groupQuotaLimitClient.Get(ctx, managementGroupId, groupName, provider, resourceName, filterString, nil)
+			if err != nil {
+				log.Fatalf("failed to finish the request: %v", err)
+			}
+			// You could use response here. We use blank identifier for just demo purposes.
+			_ = limit_res
+			break
+		} else if provisioningState == armquota.RequestStateFailed {
+			fmt.Println("Group Quota Limit Request Failed")
+			log.Fatalf("Request failed")
+		}
+		fmt.Println("Polling...")
+		time.Sleep(30 * time.Second)
+	}
+
+	if provisioningState == armquota.RequestStateInProgress || provisioningState == "Escalated" {
+		fmt.Println("Did not reach terminal state within 2 minutes. Please perform a get on this URL: %s", opStatus)
+	}
+
+	if provisioningState == "Escalated" {
+		fmt.Println("Request was escalated please contact your capacity manager. Please perform a get on this URL: %s", opStatus)
+	}
+
+	// You could use response here. We use blank identifier for just demo purposes.
+	//_ = limit_res
+	// If the HTTP response code is 200 as defined in example definition, your response structure would look as follows. Please pay attention that all the values in the output are fake values for just demo purposes.
+	// res.GroupQuotaLimit = armquota.GroupQuotaLimit{
+	// 	Name: to.Ptr("cores"),
+	// 	Type: to.Ptr("Microsoft.Quota/groupQuotas/groupQuotaLimits"),
+	// 	ID: to.Ptr("/providers/Microsoft.Management/managementGroups/E7EC67B3-7657-4966-BFFC-41EFD36BAA09/providers/Microsoft.Quota/groupQuotas/groupquota1/providers/Microsoft.Compute/locations/westus/groupQuotaLimits/cores"),
+	// 	Properties: &armquota.GroupQuotaDetails{
+	// 		Name: &armquota.GroupQuotaDetailsName{
+	// 			LocalizedValue: to.Ptr("Total vCPUs Regional Cores"),
+	// 			Value: to.Ptr("cores"),
+	// 		},
+	// 		AllocatedToSubscriptions: &armquota.AllocatedQuotaToSubscriptionList{
+	// 			Value: []*armquota.AllocatedToSubscription{
+	// 				{
+	// 					QuotaAllocated: to.Ptr[int64](20),
+	// 					SubscriptionID: to.Ptr("00000000-0000-0000-0000-000000000000"),
+	// 			}},
+	// 		},
+	// 		AvailableLimit: to.Ptr[int64](80),
+	// 		Limit: to.Ptr[int64](100),
+	// 		Region: to.Ptr("westus"),
+	// 		Unit: to.Ptr("count"),
+	// 	},
+	// }
+}
+
+func getGroupQuotaLimit(groupName string, provider string, resourceName string, region string) {
+	ctx := context.Background()
+	clientFactory := createClientFactory()
+	filterString := fmt.Sprintf("location eq %s", region)
+	res, err := clientFactory.NewGroupQuotaLimitsClient().Get(ctx, managementGroupId, groupName, provider, resourceName, filterString, nil)
+	if err != nil {
+		log.Fatalf("failed to finish the request: %v", err)
 	}
 	// You could use response here. We use blank identifier for just demo purposes.
 	_ = res
 	// If the HTTP response code is 200 as defined in example definition, your response structure would look as follows. Please pay attention that all the values in the output are fake values for just demo purposes.
-	// res.SubmittedResourceRequestStatus = armquota.SubmittedResourceRequestStatus{
-	// 	Name: to.Ptr("requestId1"),
-	// 	Type: to.Ptr("Microsoft.Quota/groupQuotas/groupQuotaLimitsRequests"),
-	// 	ID: to.Ptr("/providers/Microsoft.Management/managementGroups/E7EC67B3-7657-4966-BFFC-41EFD36BAA09/providers/Microsoft.Quota/groupQuotas/groupquota1/resourceProviders/Microsoft.Compute/groupQuotaLimitsRequests/requestId1"),
-	// 	Properties: &armquota.SubmittedResourceRequestStatusProperties{
-	// 		ProvisioningState: to.Ptr(armquota.RequestStateSucceeded),
-	// 		RequestSubmitTime: to.Ptr(func() time.Time { t, _ := time.Parse(time.RFC3339Nano, "2024-03-08T12:09:27.978Z"); return t}()),
-	// 		RequestedResource: &armquota.GroupQuotaRequestBase{
-	// 			Properties: &armquota.GroupQuotaRequestBaseProperties{
-	// 				Name: &armquota.GroupQuotaRequestBasePropertiesName{
-	// 					LocalizedValue: to.Ptr("Standard AV2 Family vCPUs"),
-	// 					Value: to.Ptr("standardav2family"),
-	// 				},
-	// 				Comments: to.Ptr("Contoso requires more quota."),
-	// 				Limit: to.Ptr[int64](100),
-	// 				Region: to.Ptr("westus"),
-	// 			},
+	// res.GroupQuotaLimit = armquota.GroupQuotaLimit{
+	// 	Name: to.Ptr("cores"),
+	// 	Type: to.Ptr("Microsoft.Quota/groupQuotas/groupQuotaLimits"),
+	// 	ID: to.Ptr("/providers/Microsoft.Management/managementGroups/E7EC67B3-7657-4966-BFFC-41EFD36BAA09/providers/Microsoft.Quota/groupQuotas/groupquota1/providers/Microsoft.Compute/locations/westus/groupQuotaLimits/cores"),
+	// 	Properties: &armquota.GroupQuotaDetails{
+	// 		Name: &armquota.GroupQuotaDetailsName{
+	// 			LocalizedValue: to.Ptr("Total vCPUs Regional Cores"),
+	// 			Value: to.Ptr("cores"),
 	// 		},
+	// 		AllocatedToSubscriptions: &armquota.AllocatedQuotaToSubscriptionList{
+	// 			Value: []*armquota.AllocatedToSubscription{
+	// 				{
+	// 					QuotaAllocated: to.Ptr[int64](20),
+	// 					SubscriptionID: to.Ptr("00000000-0000-0000-0000-000000000000"),
+	// 			}},
+	// 		},
+	// 		AvailableLimit: to.Ptr[int64](80),
+	// 		Limit: to.Ptr[int64](100),
+	// 		Region: to.Ptr("westus"),
+	// 		Unit: to.Ptr("count"),
+	// 	},
+	// }
+}
+
+// Generated from example definition: https://github.com/Azure/azure-rest-api-specs/blob/106483d9f698ac3b6c0d481ab0c5fab14152e21f/specification/quota/resource-manager/Microsoft.Quota/preview/2023-06-01-preview/examples/SubscriptionQuotaAllocationRequests/PutSubscriptionQuotaAllocationRequest-Compute.json
+func createSubscriptionAllocationRequest(groupName string, provider string, resourceName string, region string, allocVal int64) {
+	ctx := context.Background()
+	clientFactory := createClientFactory()
+	subscriptionQuotaAllocationRequestClient := clientFactory.NewGroupQuotaSubscriptionAllocationRequestClient()
+	poller, err := subscriptionQuotaAllocationRequestClient.BeginCreateOrUpdate(ctx, managementGroupId, groupName, provider, resourceName, armquota.AllocationRequestStatus{
+		Properties: &armquota.AllocationRequestStatusProperties{
+			RequestedResource: &armquota.AllocationRequestBase{
+				Properties: &armquota.AllocationRequestBaseProperties{
+					Limit:  to.Ptr[int64](allocVal),
+					Region: to.Ptr(region),
+				},
+			},
+		},
+	}, nil)
+	if err != nil {
+		log.Fatalf("failed to finish the request: %v", err)
+	}
+	res, err := poller.Poll(ctx)
+	if err != nil {
+		panic(err)
+	}
+	opStatus := res.Header["Location"][0]
+	opStatusURI, err := url.Parse(opStatus)
+	if err != nil {
+		panic(err)
+	}
+
+	// Get the request ID and the Request URL in case the request doesn't reach a terminal state in 2 minutes
+	opStatusURISegments := strings.Split(opStatusURI.Path, "/")
+	id := opStatusURISegments[len(opStatusURISegments)-1]
+
+	// Poll for 2 minutes until the group quota limit request has completed
+	start := time.Now()
+	duration := 2 * time.Minute
+	provisioningState := armquota.RequestStateInProgress
+	for time.Since(start) < duration {
+		allocation_res, err := subscriptionQuotaAllocationRequestClient.Get(ctx, managementGroupId, groupName, id, nil)
+		if err != nil {
+			panic(err)
+		}
+
+		provisioningState = *allocation_res.Properties.ProvisioningState
+		if provisioningState == armquota.RequestStateSucceeded {
+			subscriptionQuotaAllocationClient := clientFactory.NewGroupQuotaSubscriptionAllocationClient()
+			filterString := fmt.Sprintf("location eq %s", region)
+			allocation_res, err := subscriptionQuotaAllocationClient.Get(ctx, managementGroupId, provider, resourceName, filterString, nil)
+			if err != nil {
+				log.Fatalf("failed to finish the request: %v", err)
+			}
+			// You could use response here. We use blank identifier for just demo purposes.
+			_ = allocation_res
+			break
+		} else if provisioningState == armquota.RequestStateFailed {
+			fmt.Println("Group Quota Subscription Allocation Failed")
+			log.Fatalf("Request failed")
+		}
+		fmt.Println("Polling...")
+		time.Sleep(30 * time.Second)
+	}
+
+	if provisioningState == armquota.RequestStateInProgress || provisioningState == armquota.RequestStateAccepted {
+		fmt.Println("Did not reach terminal state within 2 minutes. Please perform a get on this URL: %s", opStatus)
+	}
+
+	if provisioningState == "Escalated" {
+		fmt.Println("Request was escalated please contact your capacity manager. Please perform a get on this URL: %s", opStatus)
+	}
+
+	// If the HTTP response code is 200 as defined in example definition, your response structure would look as follows. Please pay attention that all the values in the output are fake values for just demo purposes.
+	// res.SubscriptionQuotaAllocations = armquota.SubscriptionQuotaAllocations{
+	// 	Name: to.Ptr("standardav2family"),
+	// 	Type: to.Ptr("Microsoft.Quota/groupQuotas/quotaAllocations"),
+	// 	ID: to.Ptr("/providers/Microsoft.Management/managementGroups/E7EC67B3-7657-4966-BFFC-41EFD36BAA09/subscriptions/00000000-0000-0000-0000-000000000000/providers/Microsoft.Quota/groupQuotas/groupquota1/providers/Microsoft.Compute/locations/westus/quotaAllocations/standardav2family"),
+	// 	Properties: &armquota.SubscriptionQuotaDetails{
+	// 		Name: &armquota.SubscriptionQuotaDetailsName{
+	// 			LocalizedValue: to.Ptr("standard Av2 Family vCPUs"),
+	// 			Value: to.Ptr("standardav2family"),
+	// 		},
+	// 		Limit: to.Ptr[int64](100),
+	// 		Region: to.Ptr("westus"),
+	// 		ShareableQuota: to.Ptr[int64](25),
+	// 	},
+	// }
+}
+
+// Generated from example definition: https://github.com/Azure/azure-rest-api-specs/blob/106483d9f698ac3b6c0d481ab0c5fab14152e21f/specification/quota/resource-manager/Microsoft.Quota/preview/2023-06-01-preview/examples/SubscriptionQuotaAllocation/SubscriptionQuotaAllocation_Get-Compute.json
+func getSubscriptionQuotaAllocation(groupName string, resourceName string, region string) {
+	ctx := context.Background()
+	clientFactory := createClientFactory()
+	filterString := fmt.Sprintf("location eq %s", region)
+	res, err := clientFactory.NewGroupQuotaSubscriptionAllocationClient().Get(ctx, managementGroupId, groupName, resourceName, filterString, nil)
+	if err != nil {
+		log.Fatalf("failed to finish the request: %v", err)
+	}
+	// You could use response here. We use blank identifier for just demo purposes.
+	_ = res
+	// If the HTTP response code is 200 as defined in example definition, your response structure would look as follows. Please pay attention that all the values in the output are fake values for just demo purposes.
+	// res.SubscriptionQuotaAllocations = armquota.SubscriptionQuotaAllocations{
+	// 	Name: to.Ptr("standardav2family"),
+	// 	Type: to.Ptr("Microsoft.Quota/groupQuotas/quotaAllocations"),
+	// 	ID: to.Ptr("/providers/Microsoft.Management/managementGroups/E7EC67B3-7657-4966-BFFC-41EFD36BAA09/subscriptions/00000000-0000-0000-0000-000000000000/providers/Microsoft.Quota/groupQuotas/groupquota1/providers/Microsoft.Compute/locations/westus/quotaAllocations/standardav2family"),
+	// 	Properties: &armquota.SubscriptionQuotaDetails{
+	// 		Name: &armquota.SubscriptionQuotaDetailsName{
+	// 			LocalizedValue: to.Ptr("standard Av2 Family vCPUs"),
+	// 			Value: to.Ptr("standardav2family"),
+	// 		},
+	// 		Limit: to.Ptr[int64](100),
+	// 		Region: to.Ptr("westus"),
+	// 		ShareableQuota: to.Ptr[int64](25),
 	// 	},
 	// }
 }
@@ -215,8 +416,14 @@ func main() {
 	//addSubscription("test-sdk-tejas-go")
 	//deleteSubscription("test-sdk-tejas-go")
 
-	//GroupQuotaLimit Request
-	createGroupQuotaLimitRequest("test-sdk-tejas-go")
+	//GroupQuotaLimit
+	createGroupQuotaLimitRequest("test-sdk-tejas-go", "Microsoft.Compute", "cores", "westus", 64)
+	getGroupQuotaLimit("test-sdk-tejas-go", "Microsoft.Compute", "cores", "westus")
+
+	//SubscriptionQuotaAllocation
+	createSubscriptionAllocationRequest("test-sdk-tejas-go", "Microsoft.Compute", "cores", "westus", 10)
+	getSubscriptionQuotaAllocation("test-sdk-tejas-go", "cores", "westus")
+
 }
 
 func createClientFactory() *armquota.ClientFactory {
@@ -236,7 +443,6 @@ func createClientFactory() *armquota.ClientFactory {
 	if err != nil {
 		log.Fatalf("failed to create client factory: %v", err)
 	}
-
 	return clientFactory
 }
 
