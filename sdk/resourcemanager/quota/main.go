@@ -19,19 +19,11 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/quota/armquota"
 )
 
-var subscriptionId string
-
 const (
-	resourceGroupName = "sample-resource-group"
-	vmName            = "sample-vm"
-	vnetName          = "sample-vnet"
-	subnetName        = "sample-subnet"
-	nsgName           = "sample-nsg"
-	nicName           = "sample-nic"
-	diskName          = "sample-disk"
-	publicIPName      = "sample-public-ip"
 	location          = "westus2"
-	managementGroupId = "testMgIdRoot"
+	managementGroupId = "E7EC67B3-7657-4966-BFFC-41EFD36BAA09"
+	resourceName      = "cores"
+	provider          = "Microsoft.Compute"
 )
 
 const (
@@ -39,7 +31,7 @@ const (
 	moduleVersion = "v1.1.0-beta.1"
 )
 
-func createGroupQuota(groupName string) {
+func createGroupQuota(groupName string, managementGroupId string) {
 	clientFactory := createClientFactory()
 	ctx := context.Background()
 
@@ -49,7 +41,7 @@ func createGroupQuota(groupName string) {
 				AdditionalAttributes: &armquota.AdditionalAttributes{
 					GroupID: &armquota.GroupingID{
 						GroupingIDType: to.Ptr(armquota.GroupingIDTypeBillingID),
-						Value:          to.Ptr("f1d1800e-d38e-41f2-b63c-72d59ecaf9c0"),
+						Value:          to.Ptr("E7EC67B3-7657-4966-BFFC-41EFD36BAA09"),
 					},
 				},
 				DisplayName: to.Ptr(groupName),
@@ -408,21 +400,22 @@ func getSubscriptionQuotaAllocation(groupName string, resourceName string, regio
 }
 
 func main() {
-	//createGroupQuota("test-sdk-tejas-go", "testMgIdRoot")
-	//getGroupQuota("test-sdk-tejas-go")
-	//deleteGroupQuota("test-sdk-tejas-go-0")
+	//Group Quota Functions
+	createGroupQuota("groupquota1", managementGroupId)
+	getGroupQuota("groupquota1")
+	deleteGroupQuota("groupquota1")
 
 	//Subscription Functions
-	//addSubscription("test-sdk-tejas-go")
-	//deleteSubscription("test-sdk-tejas-go")
+	addSubscription("groupquota1")
+	deleteSubscription("groupquota1")
 
 	//GroupQuotaLimit
-	createGroupQuotaLimitRequest("test-sdk-tejas-go", "Microsoft.Compute", "cores", "westus", 64)
-	getGroupQuotaLimit("test-sdk-tejas-go", "Microsoft.Compute", "cores", "westus")
+	createGroupQuotaLimitRequest("groupquota1", provider, resourceName, location, 64)
+	getGroupQuotaLimit("groupquota1", provider, resourceName, location)
 
 	//SubscriptionQuotaAllocation
-	createSubscriptionAllocationRequest("test-sdk-tejas-go", "Microsoft.Compute", "cores", "westus", 10)
-	getSubscriptionQuotaAllocation("test-sdk-tejas-go", "cores", "westus")
+	createSubscriptionAllocationRequest("groupquota1", provider, resourceName, location, 10)
+	getSubscriptionQuotaAllocation("groupquota1", resourceName, location)
 
 }
 
