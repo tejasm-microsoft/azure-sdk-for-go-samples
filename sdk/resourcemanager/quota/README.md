@@ -18,6 +18,8 @@ This project framework provides examples for the following services:
 ### Database for MySQL
 * Using the Azure SDK for Golang - Quota Management Library [quota](https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/quota/armquota@v1.1.0-beta.1 )
 
+If the link is going to non existant page try this [link](https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/quota/armquota?tab=versions) then navigate to the v1.1.0-beta.1 version
+
 ### Prerequisites
 * an [Azure subscription](https://azure.microsoft.com)
 * Go 1.18 or above
