@@ -44,7 +44,7 @@ If the link is going to non existant page try this [link](https://pkg.go.dev/git
    export AZURE_OBJECT_ID=<your Azure Client/Object id> 
    ```
 
-3. Run mysql sample.
+3. Run quota sample.
 
     ```
     cd azure-sdk-for-go-samples/sdk/resourcemanager/quota
