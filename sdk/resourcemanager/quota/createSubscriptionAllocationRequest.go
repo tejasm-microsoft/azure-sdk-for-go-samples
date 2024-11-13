@@ -58,7 +58,7 @@ func createSubscriptionAllocationRequest(groupName string, provider string, reso
 		if provisioningState == armquota.RequestStateSucceeded {
 			subscriptionQuotaAllocationClient := clientFactory.NewGroupQuotaSubscriptionAllocationClient()
 			filterString := fmt.Sprintf("location eq %s", region)
-			allocation_res, err := subscriptionQuotaAllocationClient.Get(ctx, managementGroupId, provider, resourceName, filterString, nil)
+			allocation_res, err := subscriptionQuotaAllocationClient.Get(ctx, managementGroupId, groupName, resourceName, filterString, nil)
 			if err != nil {
 				log.Fatalf("failed to finish the request: %v", err)
 			}
